@@ -56,6 +56,10 @@ class LibraryRepository(
                     localPath = old?.localPath,
                     drm = old?.drm ?: DrmStatus.UNKNOWN,
                     lastOpened = old?.lastOpened,
+                    // The upsert rebuilds every row, so carry this over or a refresh clears all dismissals.
+                    dismissedAt = old?.dismissedAt,
+                    pinnedAt = old?.pinnedAt,
+                    hidden = old?.hidden ?: false,
                     sortIndex = i,
                 )
             },
@@ -164,6 +168,19 @@ class LibraryRepository(
     }
 
     suspend fun markOpened(publicationId: String) = db.books().setLastOpened(publicationId, System.currentTimeMillis())
+
+    /** Hides the book from "Also reading" until it is opened again, and unpins it if it was added by hand. */
+    suspend fun dismissFromRecent(publicationId: String) = db.books().setShelfState(publicationId, System.currentTimeMillis(), null)
+
+    /** Undo for [dismissFromRecent]: puts back the values the book had before. */
+    suspend fun restoreShelfState(publicationId: String, dismissedAt: Long?, pinnedAt: Long?) =
+        db.books().setShelfState(publicationId, dismissedAt, pinnedAt)
+
+    /** Moves the book out of the Library into the collapsed "Hidden" list, or back. Local only. */
+    suspend fun setHidden(publicationId: String, hidden: Boolean) = db.books().setHidden(publicationId, hidden)
+
+    /** Adds the book to "Also reading" by hand. */
+    suspend fun pinToRecent(publicationId: String) = db.books().setPinnedAt(publicationId, System.currentTimeMillis())
 
     suspend fun clearAll() = withContext(Dispatchers.IO) {
         db.clearAllTables()

@@ -1,5 +1,6 @@
 package de.freal.toleo.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -29,6 +30,12 @@ data class BookEntity(
     val lastOpened: Long? = null,
     /** Order of appearance in the cloud inventory (newest first is index 0). */
     val sortIndex: Int = 0,
+    /** When the book was dismissed from "Recently opened"; it returns once [lastOpened] passes this. */
+    val dismissedAt: Long? = null,
+    /** When the user added the book to "Also reading" by hand; pinned books stay there until dismissed. */
+    val pinnedAt: Long? = null,
+    /** Hidden from the Library, the shelf and the current-book panel; listed under "Hidden" instead. Local only. */
+    @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
 )
 
 /** Reading position: the Tolino `bookmark` item, one per publication. */
@@ -124,6 +131,9 @@ data class BookWithState(
     val inCloud: Boolean,
     val lastOpened: Long?,
     val sortIndex: Int,
+    val dismissedAt: Long?,
+    val pinnedAt: Long?,
+    val hidden: Boolean,
     val progress: Double?,
     val finished: Boolean,
     val collections: String?,

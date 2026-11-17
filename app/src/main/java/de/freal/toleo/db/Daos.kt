@@ -13,7 +13,7 @@ interface BookDao {
     @Query(
         """
         SELECT b.publicationId, b.title, b.subtitle, b.authors, b.coverUrl, b.format, b.localPath, b.drm,
-               b.isUpload, b.inCloud, b.lastOpened, b.sortIndex, p.progress,
+               b.isUpload, b.inCloud, b.lastOpened, b.sortIndex, b.dismissedAt, b.pinnedAt, b.hidden, p.progress,
                EXISTS(SELECT 1 FROM tag t WHERE t.publicationId = b.publicationId AND t.name = '${TagEntity.FINISHED_NAME}' AND t.deleted = 0) AS finished,
                (SELECT GROUP_CONCAT(t.name, '\u001F') FROM tag t WHERE t.publicationId = b.publicationId AND t.category = '${TagEntity.CATEGORY_COLLECTION}' AND t.deleted = 0) AS collections
         FROM book b LEFT JOIN position p ON p.publicationId = b.publicationId
@@ -35,6 +35,16 @@ interface BookDao {
 
     @Query("UPDATE book SET lastOpened = :time WHERE publicationId = :id")
     suspend fun setLastOpened(id: String, time: Long)
+
+    /** Sets both shelf fields at once so dismissing (which unpins) and undoing it stay consistent. */
+    @Query("UPDATE book SET dismissedAt = :dismissedAt, pinnedAt = :pinnedAt WHERE publicationId = :id")
+    suspend fun setShelfState(id: String, dismissedAt: Long?, pinnedAt: Long?)
+
+    @Query("UPDATE book SET pinnedAt = :time WHERE publicationId = :id")
+    suspend fun setPinnedAt(id: String, time: Long?)
+
+    @Query("UPDATE book SET hidden = :hidden WHERE publicationId = :id")
+    suspend fun setHidden(id: String, hidden: Boolean)
 
     @Query("UPDATE book SET inCloud = 0 WHERE publicationId NOT IN (:ids)")
     suspend fun markMissingFromCloud(ids: List<String>)
