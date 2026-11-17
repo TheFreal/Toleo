@@ -26,26 +26,12 @@ Or open the folder in Android Studio and run the `app` configuration.
 
 Positions are saved locally as you read and pushed when you leave a book, on pull-to-refresh, and every 30 minutes.
 
-## What is verified and what isn't
-
-The tolino API is unofficial; Toleo relies on other people's reverse engineering (see [Acknowledgements](#acknowledgements)). Status as of 2026-11-14:
-
-| Area | Status |
-|---|---|
-| Reader, open-book layout, flip animation, themes, highlight/note creation | Tested on an emulator at Pixel Fold inner-display size |
-| Tolino position strings (`#point(/1/2/1/3/1:0)`) | Generated under the hypothesis in `TextIndex` (1-based indices over elements and non-blank text nodes). Matches the one known sample, **not yet checked against a real tolino device** |
-| `bosh.pageplace.de` API | Reachable; error format matches the docs |
-| Partner login / token endpoints | **Not tested with an account.** Thalia-platform shops return `403 Zugriff geblockt` to traffic from outside the DACH region (observed from Australia, including inside the WebView). Use a VPN in DE/AT/CH for login and token refresh |
-| Library, download, upload, `sync-data` | Implemented from the docs; **untested against the live service** |
-
-When something fails, open **Account & devices → Diagnostics**, which logs every API call with tokens redacted, and copy the log.
-
 ## Known limits
 
 - Adobe DRM and Readium LCP titles are listed but can't be opened (licensed SDK needed); their positions still sync.
 - PDFs open in the system PDF viewer.
 - Highlight colours are local only; tolino has no colour field.
-- Page-flip animation applies to taps and volume keys; swiping uses Readium's slide.
+- Page-flip animation is still a bit glitchy and applies only to taps and volume keys; swiping uses Readium's slide.
 
 ## Layout
 
