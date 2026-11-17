@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AppCompat parent: Readium's navigator views and the reader's AppCompatActivity require it. UI itself is Compose. -->
+    <style name="Theme.Toleo" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+    <color name="background">#FFFBF8F3</color>
+</resources>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Readium's own top/bottom page margin (40dp by default) is disabled; ReaderScreen pads the
+        page area itself so the margin is exact, equal at top and bottom, and user-adjustable.
+    -->
+    <dimen name="readium_navigator_epub_vertical_padding">0dp</dimen>
+</resources>

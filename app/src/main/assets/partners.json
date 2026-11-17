@@ -1,0 +1,46 @@
+[
+  {
+    "id": "thalia_de",
+    "name": "Thalia (DE)",
+    "resellerIds": [3, 2],
+    "authUrl": "https://www.thalia.de/de.thalia.ecp.authservice.application/oauth2/authorize",
+    "tokenUrl": "https://www.thalia.de/auth/oauth2/token",
+    "clientId": "webreader",
+    "scope": "SCOPE_BOSH",
+    "skinId": "17",
+    "mandantId": "2"
+  },
+  {
+    "id": "orellfuessli",
+    "name": "Orell Füssli (CH)",
+    "resellerIds": [8],
+    "authUrl": "https://www.orellfuessli.ch/de.thalia.ecp.authservice.application/oauth2/authorize",
+    "tokenUrl": "https://www.orellfuessli.ch/auth/oauth2/token",
+    "clientId": "webreader",
+    "scope": "SCOPE_BOSH",
+    "skinId": "17",
+    "mandantId": "37"
+  },
+  {
+    "id": "thalia_at",
+    "name": "Thalia (AT)",
+    "resellerIds": [4],
+    "authUrl": "https://www.thalia.at/de.thalia.ecp.authservice.application/oauth2/authorize",
+    "tokenUrl": "https://www.thalia.at/de.buch.appservices/api/4004/oauth2/token",
+    "clientId": "webshop01",
+    "scope": "SCOPE_BOSH SCOPE_BUCHDE",
+    "skinId": "17",
+    "mandantId": "4"
+  },
+  {
+    "id": "osiander",
+    "name": "Osiander (DE)",
+    "resellerIds": [23],
+    "authUrl": "https://www.osiander.de/de.thalia.ecp.authservice.application/oauth2/authorize",
+    "tokenUrl": "https://www.osiander.de/auth/oauth2/token",
+    "clientId": "webreader",
+    "scope": "SCOPE_BOSH",
+    "skinId": "17",
+    "mandantId": "51"
+  }
+]
