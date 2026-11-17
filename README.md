@@ -28,7 +28,7 @@ Positions are saved locally as you read and pushed when you leave a book, on pul
 
 ## What is verified and what isn't
 
-The tolino API is unofficial and reverse-engineered from community documentation. Status as of 2026-11-14:
+The tolino API is unofficial; Toleo relies on other people's reverse engineering (see [Acknowledgements](#acknowledgements)). Status as of 2026-11-14:
 
 | Area | Status |
 |---|---|
@@ -60,3 +60,14 @@ app/src/main/java/de/freal/toleo/
   ui/         login, library, account screens
 app/src/main/assets/partners.json   partner URLs and IDs (edit here when they change)
 ```
+
+## Acknowledgements
+
+Toleo wouldn't exist without the people who figured out the tolino cloud API and shared it:
+
+- **[Christian Weiske (cweiske)](https://github.com/cweiske/tolino-api-docs)**: the [Tolino cloud API documentation](http://cweiske.de/tolino-api-docs.htm), including the `sync-data` patch format and the login and sync sequences.
+- **[darkphoenix/tolino-calibre-sync](https://github.com/darkphoenix/tolino-calibre-sync)**: `tolinocloud.py`, the web reader client this app's partner OAuth settings, device registration and download flow come from.
+- **[ImamAzim/pytolino](https://github.com/ImamAzim/pytolino)**: a current web reader client covering token refresh, collections, the finished state and downloads.
+- **[moritzkeller12-beep/calibre-tolinocloud-Plugin#28](https://github.com/moritzkeller12-beep/calibre-tolinocloud-Plugin/pull/28)** and **[TheBlackPrism/Retrospine#2](https://github.com/TheBlackPrism/Retrospine/pull/2)**: recent findings on the shared web reader login.
+
+Rendering is done by the [Readium Kotlin Toolkit](https://github.com/readium/kotlin-toolkit).
