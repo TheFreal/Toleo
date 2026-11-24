@@ -49,7 +49,10 @@ class ReaderActivity : AppCompatActivity() {
         // The activity is recreated when the system switches light/dark mode, so this runs on every switch.
         followSystemTheme(resources.configuration)
         val widthDp = resources.configuration.screenWidthDp
-        installNavigatorFactory(session, prefsStore.current.value.twoPages(widthDp), widthDp, session.initialLocator)
+        prefsStore.current.value.let { p ->
+            val two = p.twoPages(widthDp)
+            installNavigatorFactory(session, two, if (two) p.spineGutter else 0, widthDp, session.initialLocator)
+        }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // Keep the display on while reading; the flag only applies while this window is visible.
@@ -59,8 +62,8 @@ class ReaderActivity : AppCompatActivity() {
             ReaderScreen(
                 vm = viewModel,
                 onClose = ::finish,
-                installNavigatorFactory = { twoPages, width ->
-                    installNavigatorFactory(session, twoPages, width, viewModel.locator.value ?: session.initialLocator)
+                installNavigatorFactory = { twoPages, spineGutter, width ->
+                    installNavigatorFactory(session, twoPages, spineGutter, width, viewModel.locator.value ?: session.initialLocator)
                 },
             )
         }
@@ -80,12 +83,18 @@ class ReaderActivity : AppCompatActivity() {
      * only be set here, so the reader installs a new factory and recreates the navigator when the
      * mode changes, starting at [locator].
      */
-    private fun installNavigatorFactory(session: ReaderSession, twoPages: Boolean, widthDp: Int, locator: org.readium.r2.shared.publication.Locator?) {
+    private fun installNavigatorFactory(
+        session: ReaderSession,
+        twoPages: Boolean,
+        spineGutterDp: Int,
+        widthDp: Int,
+        locator: org.readium.r2.shared.publication.Locator?,
+    ) {
         supportFragmentManager.fragmentFactory = session.navigatorFactory.createFragmentFactory(
             initialLocator = locator,
             initialPreferences = prefsStore.current.value.toEpub(widthDp),
             configuration = EpubNavigatorFragment.Configuration(
-                readiumCssRsProperties = ReaderPrefs.rsProperties(twoPages),
+                readiumCssRsProperties = ReaderPrefs.rsProperties(twoPages, spineGutterDp),
                 selectionActionModeCallback = selectionCallback,
                 // Readium would pad the full cutout safe area on top of its own margin; the margin
                 // alone (res/values/dimens.xml) is enough while the system bars are hidden.

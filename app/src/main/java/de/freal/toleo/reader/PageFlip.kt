@@ -246,7 +246,11 @@ suspend fun snapshotOf(view: View, window: Window): ImageBitmap? {
     if (view.width == 0 || view.height == 0) return null
     val location = IntArray(2).also(view::getLocationInWindow)
     val rect = android.graphics.Rect(location[0], location[1], location[0] + view.width, location[1] + view.height)
-    val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+    // With a spine gutter the WebView reaches past the screen edges; capture only what's visible,
+    // which matches the page area the flip overlay is drawn over.
+    val decor = window.decorView
+    if (!rect.intersect(0, 0, decor.width, decor.height)) return null
+    val bitmap = Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
     return suspendCancellableCoroutine { cont ->
         PixelCopy.request(window, rect, bitmap, { result ->
             cont.resume(if (result == PixelCopy.SUCCESS) bitmap.asImageBitmap() else null)

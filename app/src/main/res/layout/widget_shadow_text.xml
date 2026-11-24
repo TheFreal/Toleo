@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Like widget_shadow_title, in the regular weight for author and progress. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <TextView
+        android:id="@+id/shadow_wide"
+        style="@style/WidgetShadowText"
+        android:importantForAccessibility="no"
+        android:shadowColor="#B3000000"
+        android:shadowRadius="16" />
+
+    <TextView
+        android:id="@+id/shadow_tight"
+        style="@style/WidgetShadowText"
+        android:shadowColor="#F2000000"
+        android:shadowDy="1.5"
+        android:shadowRadius="4" />
+</FrameLayout>

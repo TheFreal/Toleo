@@ -40,9 +40,9 @@ data class ReaderPrefs(
     /** Text size as shown to the user; 1.0 ("100 %") is [FONT_SIZE_BASE] × Readium's default. */
     val fontSize: Double = 1.0,
     /** Line height as a multiple of the font size. */
-    val lineHeight: Double = 1.65,
+    val lineHeight: Double = 1.75,
     /** Side margins as shown to the user; 1.0 ("100 %") is [PAGE_MARGINS_BASE] × Readium's gutter. */
-    val pageMargins: Double = 1.0,
+    val pageMargins: Double = 0.9,
     /** Top and bottom page margin in dp, applied equally so the text block sits centred. */
     val verticalMargin: Int = 64,
     val theme: ReaderTheme = ReaderTheme.SEPIA,
@@ -57,6 +57,8 @@ data class ReaderPrefs(
     val crease: Boolean = true,
     /** Strength of the crease shading, 0–1. */
     val creaseOpacity: Double = 0.5,
+    /** Extra space in dp between the two pages in open-book mode, on top of the side margins. */
+    val spineGutter: Int = 24,
     /** Last light and dark colour picked, restored when the system switches light/dark mode. */
     val lightTheme: ReaderTheme? = null,
     val darkTheme: ReaderTheme? = null,
@@ -99,6 +101,11 @@ data class ReaderPrefs(
             textAlign = if (justify) TextAlign.JUSTIFY else TextAlign.START,
             // Justified text without hyphenation leaves rivers of white space in narrow columns.
             hyphens = justify,
+            // Page heights are whole lines (ReaderScreen.wholeLinePage), so top and bottom margins
+            // match only if text stays on the line grid. Books often add a few px below every
+            // paragraph, which adds up to a gap at the bottom of each column; paragraphs are
+            // told apart by their indent instead.
+            paragraphSpacing = 0.0,
             columnCount = if (two) ColumnCount.TWO else ColumnCount.ONE,
             spread = if (two) Spread.ALWAYS else Spread.NEVER,
         )
@@ -115,24 +122,43 @@ data class ReaderPrefs(
          */
         const val TWO_PAGE_MIN_WIDTH_DP = 640
 
+        const val PAGE_GUTTER_PX = 36.0
+        const val MAX_SPINE_GUTTER_DP = 64
+
         /**
          * Reading-system CSS properties. They are fixed when the navigator is created, so the
-         * reader recreates the navigator when switching between one and two pages.
+         * reader recreates the navigator when switching between one and two pages or changing
+         * [spineGutterDp].
+         *
+         * Readium pages by exactly one viewport width, which only matches the column stride with a
+         * zero column gap, and the gutter padding inside each column is the same on both sides.
+         * So the extra spine is made by widening each column's padding by half of it, and
+         * widening the WebView by the same amount past each screen edge (see [spineOverhangDp]):
+         * the outer margins stay where they were and only the middle grows. The padding is
+         * `pageGutter × pageMargins`, so the extra is divided by the margin factor in CSS to keep
+         * it a fixed width while the side-margin slider moves.
          */
-        fun rsProperties(twoPages: Boolean): RsProperties = if (twoPages) {
+        fun rsProperties(twoPages: Boolean, spineGutterDp: Int = 0): RsProperties = if (twoPages) {
+            val half = spineOverhangDp(spineGutterDp)
             RsProperties(
                 colCount = ColCount.TWO,
                 colWidth = Length.Em(10.0), // minimum width; column-count caps it at two
-                // Readium pages by exactly one viewport width, which only matches the column stride
-                // with a zero gap. The spine (where the hinge sits) comes from the gutter padding
-                // inside each column instead: 2 × 36 px.
+                // Spine (where the hinge sits) = gutter padding of both columns: 2 × 36 px (+ extra).
                 colGap = Length.Px(0.0),
-                pageGutter = Length.Px(36.0),
+                pageGutter = if (half > 0) null else Length.Px(PAGE_GUTTER_PX),
                 maxLineLength = Length.Rem(40.0),
+                overrides = if (half > 0) {
+                    mapOf("--RS__pageGutter" to "calc(${PAGE_GUTTER_PX}px + ${half}px / var(--USER__pageMargins, 1))")
+                } else {
+                    emptyMap()
+                },
             )
         } else {
             RsProperties()
         }
+
+        /** How far the WebView reaches past each screen edge for [spineGutterDp] of extra spine. */
+        fun spineOverhangDp(spineGutterDp: Int): Double = spineGutterDp.coerceIn(0, MAX_SPINE_GUTTER_DP) / 2.0
     }
 }
 

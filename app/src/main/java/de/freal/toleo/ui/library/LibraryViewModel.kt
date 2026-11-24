@@ -7,14 +7,19 @@ import androidx.lifecycle.viewModelScope
 import de.freal.toleo.AppContainer
 import de.freal.toleo.db.BookWithState
 import de.freal.toleo.db.DrmStatus
+import de.freal.toleo.library.EpubMeta
+import de.freal.toleo.library.UploadDraft
 import de.freal.toleo.reader.ReaderSession
 import de.freal.toleo.sync.SyncStatus
 import de.freal.toleo.tolino.NeedsLoginException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -58,17 +63,53 @@ data class LibraryState(
     val collection: String? = null,
     val query: String = "",
     val sort: SortChoice = SortChoice(),
+    /** Books picked for a batch action, hidden ones included. Selecting mode is on while this isn't empty. */
+    val selectedBooks: List<BookWithState> = emptyList(),
+) {
+    val selecting: Boolean get() = selectedBooks.isNotEmpty()
+    val selectedIds: Set<String> = selectedBooks.mapTo(HashSet()) { it.publicationId }
+    /** Books already shown above the Library (shelf or current-book panel); they don't offer "Add to Also reading". */
+    val shelfIds: Set<String> = recent.mapTo(HashSet()) { it.publicationId } + listOfNotNull(continueReading?.publicationId)
+}
+
+/** Which batch actions make sense for a selection; each list holds the selected books the action would change. */
+data class SelectionActions(
+    val download: List<BookWithState>,
+    val removeDownload: List<BookWithState>,
+    val markFinished: List<BookWithState>,
+    val markUnread: List<BookWithState>,
+    val addToShelf: List<BookWithState>,
+    val dismiss: List<BookWithState>,
+    val hide: List<BookWithState>,
+    val unhide: List<BookWithState>,
+    val deleteFromCloud: List<BookWithState>,
 )
+
+fun LibraryState.selectionActions(): SelectionActions {
+    val onShelf = recent.mapTo(HashSet()) { it.publicationId }
+    val sel = selectedBooks
+    return SelectionActions(
+        download = sel.filter { it.localPath == null && it.inCloud && it.publicationId !in downloads },
+        removeDownload = sel.filter { it.localPath != null },
+        markFinished = sel.filter { !it.finished },
+        markUnread = sel.filter { it.finished },
+        addToShelf = sel.filter { !it.hidden && it.publicationId !in shelfIds },
+        dismiss = sel.filter { it.publicationId in onShelf },
+        hide = sel.filter { !it.hidden },
+        unhide = sel.filter { it.hidden },
+        deleteFromCloud = sel.filter { it.isUpload && it.inCloud },
+    )
+}
 
 sealed interface LibraryEvent {
     data object OpenReader : LibraryEvent
     data class OpenExternal(val file: File, val mimeType: String) : LibraryEvent
     data class Protected(val book: BookWithState) : LibraryEvent
     data class Message(val text: String) : LibraryEvent
-    /** A book left "Recently opened"; the screen offers Undo. */
-    data class Dismissed(val book: BookWithState) : LibraryEvent
-    /** A book moved to "Hidden"; the screen offers Undo. */
-    data class Hidden(val book: BookWithState) : LibraryEvent
+    /** Books left "Recently opened"; the screen offers Undo. */
+    data class Dismissed(val books: List<BookWithState>) : LibraryEvent
+    /** Books moved to "Hidden"; the screen offers Undo. */
+    data class Hidden(val books: List<BookWithState>) : LibraryEvent
 }
 
 private data class Params(val filter: LibraryFilter, val collection: String?, val query: String, val sort: SortChoice)
@@ -80,6 +121,7 @@ class LibraryViewModel(private val container: AppContainer, appContext: android.
     private val query = MutableStateFlow("")
     private val sort = MutableStateFlow(SortChoice())
     private val params = combine(filter, collection, query, sort, ::Params)
+    private val selection = MutableStateFlow<Set<String>>(emptySet())
     private val _events = Channel<LibraryEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
@@ -113,12 +155,14 @@ class LibraryViewModel(private val container: AppContainer, appContext: android.
     }
 
     val state: StateFlow<LibraryState> = combine(
-        library.observeLibrary(), library.downloads, params,
-    ) { all, downloads, (f, c, q, s) ->
+        library.observeLibrary(), library.downloads, params, selection,
+    ) { all, downloads, (f, chosen, q, s), picked ->
         // Hidden books take no part in the Library, the shelf, the current-book panel or the collection chips.
         val books = all.filterNot { it.hidden }
-        val byRecent = books.sortedWith(recentOrder)
-        val current = byRecent.firstOrNull { it.lastOpened != null && !it.finished }
+        val collections = books.flatMap { it.collectionList() }.distinct().sorted()
+        // Emptying a collection removes it, so a filter on it must not strand the user on an empty list.
+        val c = chosen?.takeIf { it in collections }
+        val current = currentlyReading(books)
         val visible = books.sortedWith(s.sort.comparator(s.reversed)).filter { b ->
             when (f) {
                 LibraryFilter.ALL -> true
@@ -133,21 +177,30 @@ class LibraryViewModel(private val container: AppContainer, appContext: android.
             continueReading = current,
             recent = recentlyOpened(books, current, ZonedDateTime.now()),
             hiddenBooks = all.filter { it.hidden && it.matchesQuery(q) }.sortedWith(titleOrder),
-            collections = books.flatMap { it.collectionList() }.distinct().sorted(),
+            collections = collections,
             downloads = downloads,
             filter = f,
             collection = c,
             query = q,
             sort = s,
+            selectedBooks = if (picked.isEmpty()) emptyList() else all.filter { it.publicationId in picked },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LibraryState())
 
     init {
         refresh()
         runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
+        // A tap on the home screen widget asks for its book to be opened.
+        viewModelScope.launch {
+            container.openRequest.filterNotNull().collect { id ->
+                container.openRequest.value = null
+                library.observeLibrary().first().firstOrNull { it.publicationId == id }?.let(::open)
+            }
+        }
     }
 
     override fun onCleared() {
+        uploadDraft.value?.let(library::discardStaged)
         runCatching { connectivity?.unregisterNetworkCallback(networkCallback) }
     }
 
@@ -161,18 +214,13 @@ class LibraryViewModel(private val container: AppContainer, appContext: android.
 
     fun dismiss(book: BookWithState) = launchCatching("Could not dismiss") {
         library.dismissFromRecent(book.publicationId)
-        _events.send(LibraryEvent.Dismissed(book))
-    }
-
-    /** Undo for [dismiss]; [book] is the row as it was before dismissing. */
-    fun undoDismiss(book: BookWithState) = launchCatching("Could not undo") {
-        library.restoreShelfState(book.publicationId, book.dismissedAt, book.pinnedAt)
+        _events.send(LibraryEvent.Dismissed(listOf(book)))
     }
 
     /** Moves [book] out of the Library into the collapsed "Hidden" list. */
     fun hide(book: BookWithState) = launchCatching("Could not hide") {
         library.setHidden(book.publicationId, true)
-        _events.send(LibraryEvent.Hidden(book))
+        _events.send(LibraryEvent.Hidden(listOf(book)))
     }
 
     fun unhide(book: BookWithState) = launchCatching("Could not show") { library.setHidden(book.publicationId, false) }
@@ -181,6 +229,146 @@ class LibraryViewModel(private val container: AppContainer, appContext: android.
     fun addToRecent(book: BookWithState) {
         setRecentExpanded(true)
         launchCatching("Could not add") { library.pinToRecent(book.publicationId) }
+    }
+
+    fun download(book: BookWithState) = launchCatching("Download failed") { library.download(book.publicationId) }
+    fun removeDownload(book: BookWithState) = launchCatching("Could not remove") { library.removeDownload(book.publicationId) }
+    fun setFinished(book: BookWithState, finished: Boolean) = launchCatching("Could not update") { library.setFinished(book.publicationId, finished) }
+    fun deleteFromCloud(book: BookWithState) = launchCatching("Delete failed") {
+        library.deleteFromCloud(book.publicationId)
+        _events.send(LibraryEvent.Message("Deleted “${book.title}” from the cloud"))
+    }
+
+    /** Starts selecting with [book] ("Select" in its menu), or toggles it while selecting. Leaving the last book ends selecting. */
+    fun toggleSelected(book: BookWithState) {
+        selection.update { if (book.publicationId in it) it - book.publicationId else it + book.publicationId }
+    }
+
+    /** Adds every book the Library grid currently shows (after sort, filter, collection and search). */
+    fun selectAllVisible() {
+        val ids = state.value.books.map { it.publicationId }
+        selection.update { it + ids }
+    }
+
+    fun clearSelection() { selection.value = emptySet() }
+
+    /** Takes the current selection and ends selecting, so the tiles show what the action does. */
+    private fun takeSelection(): LibraryState {
+        val s = state.value
+        clearSelection()
+        return s
+    }
+
+    fun downloadSelected() {
+        val books = takeSelection().selectionActions().download
+        runBatch(books, "Download failed") { library.download(it.publicationId) }
+    }
+
+    fun removeSelectedDownloads() {
+        val books = takeSelection().selectionActions().removeDownload
+        runBatch(books, "Could not remove") { library.removeDownload(it.publicationId) }
+    }
+
+    fun setSelectedFinished(finished: Boolean) {
+        val actions = takeSelection().selectionActions()
+        runBatch(if (finished) actions.markFinished else actions.markUnread, "Could not update") {
+            library.setFinished(it.publicationId, finished)
+        }
+    }
+
+    /** Moves the selected books out of the Library into the collapsed "Hidden" list. */
+    fun hideSelected() {
+        val books = takeSelection().selectionActions().hide
+        if (books.isEmpty()) return
+        launchCatching("Could not hide") {
+            books.forEach { library.setHidden(it.publicationId, true) }
+            _events.send(LibraryEvent.Hidden(books))
+        }
+    }
+
+    fun unhideSelected() {
+        val books = takeSelection().selectionActions().unhide
+        runBatch(books, "Could not show") { library.setHidden(it.publicationId, false) }
+    }
+
+    /** Undo for [hideSelected]; also puts hidden books back one by one. */
+    fun unhide(books: List<BookWithState>) = runBatch(books, "Could not show") { library.setHidden(it.publicationId, false) }
+
+    fun dismissSelected() {
+        val books = takeSelection().selectionActions().dismiss
+        if (books.isEmpty()) return
+        launchCatching("Could not dismiss") {
+            books.forEach { library.dismissFromRecent(it.publicationId) }
+            _events.send(LibraryEvent.Dismissed(books))
+        }
+    }
+
+    /** Undo for [dismissSelected]; [books] are the rows as they were before dismissing. */
+    fun undoDismiss(books: List<BookWithState>) = runBatch(books, "Could not undo") {
+        library.restoreShelfState(it.publicationId, it.dismissedAt, it.pinnedAt)
+    }
+
+    /** Adds the selected books to the "Also reading" shelf by hand, and opens the shelf if it was collapsed. */
+    fun addSelectedToRecent() {
+        val books = takeSelection().selectionActions().addToShelf
+        if (books.isEmpty()) return
+        setRecentExpanded(true)
+        runBatch(books, "Could not add") { library.pinToRecent(it.publicationId) }
+    }
+
+    fun deleteSelectedFromCloud() {
+        val books = takeSelection().selectionActions().deleteFromCloud
+        runBatch(books, "Delete failed", successMessage = {
+            if (it.size == 1) "Deleted “${it.first().title}” from the cloud" else "Deleted ${it.size} books from the cloud"
+        }) { library.deleteFromCloud(it.publicationId) }
+    }
+
+    /**
+     * Puts the selected books into the collections in [add] and out of those in [remove]. [add] may name
+     * collections that don't exist yet, which creates them.
+     */
+    fun updateSelectedCollections(add: Set<String>, remove: Set<String>) {
+        val ids = takeSelection().selectedBooks.map { it.publicationId }
+        if (ids.isEmpty() || (add.isEmpty() && remove.isEmpty())) return
+        launchCatching("Could not update collections") { library.updateCollections(ids, add, remove) }
+    }
+
+    /**
+     * Runs [op] on each of [books] in turn. A failure doesn't stop the others; the user is told how many
+     * failed, or [successMessage] if all went through. Losing the cloud connection stops the rest.
+     */
+    private fun runBatch(
+        books: List<BookWithState>,
+        errorPrefix: String,
+        successMessage: ((List<BookWithState>) -> String)? = null,
+        op: suspend (BookWithState) -> Unit,
+    ) {
+        if (books.isEmpty()) return
+        viewModelScope.launch {
+            var failed = 0
+            var lastError: String? = null
+            for (book in books) {
+                try {
+                    op(book)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: NeedsLoginException) {
+                    _events.send(LibraryEvent.Message("$errorPrefix: not connected to the cloud"))
+                    return@launch
+                } catch (e: Exception) {
+                    failed++
+                    lastError = e.message
+                }
+            }
+            when {
+                failed > 0 -> _events.send(
+                    LibraryEvent.Message(
+                        if (books.size == 1) "$errorPrefix: $lastError" else "$errorPrefix for $failed of ${books.size} books: $lastError",
+                    ),
+                )
+                successMessage != null -> _events.send(LibraryEvent.Message(successMessage(books)))
+            }
+        }
     }
 
     fun refresh() {
@@ -237,17 +425,29 @@ class LibraryViewModel(private val container: AppContainer, appContext: android.
         }
     }
 
-    fun download(book: BookWithState) = launchCatching("Download failed") { library.download(book.publicationId) }
-    fun removeDownload(book: BookWithState) = launchCatching("Could not remove") { library.removeDownload(book.publicationId) }
-    fun setFinished(book: BookWithState, finished: Boolean) = launchCatching("Could not update") { library.setFinished(book.publicationId, finished) }
-    fun deleteFromCloud(book: BookWithState) = launchCatching("Delete failed") {
-        library.deleteFromCloud(book.publicationId)
-        _events.send(LibraryEvent.Message("Deleted “${book.title}” from the cloud"))
+    /** A picked file waiting for the user to check or edit its metadata before it is uploaded. */
+    val uploadDraft = MutableStateFlow<UploadDraft?>(null)
+
+    /** Stages the picked file; EPUBs with editable metadata wait for [confirmUpload], everything else uploads at once. */
+    fun startUpload(uri: Uri) = launchCatching("Upload failed") {
+        val draft = library.stageUpload(uri)
+        if (draft.meta == null) finishUpload(draft, null) else uploadDraft.value = draft
     }
 
-    fun upload(uri: Uri) = launchCatching("Upload failed") {
+    fun confirmUpload(edits: EpubMeta) {
+        val draft = uploadDraft.value ?: return
+        uploadDraft.value = null
+        launchCatching("Upload failed") { finishUpload(draft, edits) }
+    }
+
+    fun cancelUpload() {
+        uploadDraft.value?.let(library::discardStaged)
+        uploadDraft.value = null
+    }
+
+    private suspend fun finishUpload(draft: UploadDraft, edits: EpubMeta?) {
         _events.send(LibraryEvent.Message("Uploading…"))
-        library.upload(uri)
+        library.uploadStaged(draft, edits)
         _events.send(LibraryEvent.Message("Upload finished"))
     }
 
@@ -296,6 +496,13 @@ fun recentlyOpened(books: List<BookWithState>, current: BookWithState?, now: Zon
         .take((RECENT_MAX - pinned.size).coerceAtLeast(0))
     return pinned + automatic
 }
+
+/**
+ * The book shown in the current-book panel and the home screen widget: the most recently
+ * opened book that isn't finished or hidden.
+ */
+fun currentlyReading(books: List<BookWithState>): BookWithState? =
+    books.filter { !it.hidden && it.lastOpened != null && !it.finished }.minWithOrNull(recentOrder)
 
 /** Most recently opened first, never-opened last, then inventory order. */
 private val recentOrder = compareByDescending<BookWithState> { it.lastOpened ?: 0L }.thenBy { it.sortIndex }

@@ -28,12 +28,23 @@ class MainActivity : ComponentActivity() {
         setContent {
             ToleoTheme { ToleoNav(container) }
         }
-        if (savedInstanceState == null) handleViewIntent(intent)
+        val fromHistory = intent.flags and android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromHistory) {
+            handleViewIntent(intent)
+            handleWidgetIntent(intent)
+        }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         handleViewIntent(intent)
+        handleWidgetIntent(intent)
+    }
+
+    /** A tap on the home screen widget: the library opens that book once it is up. */
+    private fun handleWidgetIntent(intent: android.content.Intent?) {
+        val id = intent?.getStringExtra(de.freal.toleo.widget.CurrentBookWidget.EXTRA_OPEN_BOOK) ?: return
+        (application as ToleoApp).container.openRequest.value = id
     }
 
     /** "Open with Toleo" for local EPUB files: read locally, never synced. */

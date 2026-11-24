@@ -82,12 +82,15 @@ dependencies {
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
     implementation(libs.work.runtime)
+    implementation(libs.glance.appwidget)
+    implementation(libs.glance.material3)
 
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.androidx.palette)
 
     implementation(libs.readium.shared)
     implementation(libs.readium.streamer)

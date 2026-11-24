@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import de.freal.toleo.AppContainer
 import de.freal.toleo.db.AnnotationEntity
 import de.freal.toleo.db.AnnotationType
+import de.freal.toleo.library.EpubMeta
+import de.freal.toleo.library.LibraryRepository
+import de.freal.toleo.tolino.NeedsLoginException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,7 +17,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.stateIn
 import kotlin.math.roundToInt
-import org.readium.r2.shared.publication.services.positions
+import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -43,6 +46,9 @@ data class PageInfo(
 
 data class TocEntry(val link: Link, val title: String, val depth: Int)
 
+/** The upload confirmation; [meta] is null when the book's metadata can't be edited (it is then only confirmed). */
+data class UploadPrompt(val meta: EpubMeta?)
+
 class ReaderViewModel(
     private val container: AppContainer,
     val session: ReaderSession,
@@ -67,6 +73,9 @@ class ReaderViewModel(
 
     private val chapterLayout = MutableStateFlow<ChapterLayout?>(null)
     private val positionCount = MutableStateFlow<Int?>(null)
+
+    /** Readium positions in each reading-order resource, once loaded; they weigh each resource by its length. */
+    private var positionsPerResource: List<Int>? = null
 
     val pageInfo: kotlinx.coroutines.flow.StateFlow<PageInfo> = kotlinx.coroutines.flow.combine(
         locator, chapterLayout, positionCount,
@@ -98,6 +107,19 @@ class ReaderViewModel(
     val editing = MutableStateFlow<AnnotationEntity?>(null)
     val message = MutableStateFlow<String?>(null)
 
+    /** Local-only books (opened from another app) can be uploaded to the tolino cloud from the menu. */
+    val isLocal = pubId.startsWith(LibraryRepository.LOCAL_PREFIX)
+    val uploading = MutableStateFlow(false)
+
+    /** Set when the upload prompt is showing. [UploadPrompt.meta] is null if the metadata can't be edited. */
+    val uploadPrompt = MutableStateFlow<UploadPrompt?>(null)
+
+    /** True once the book has moved to the cloud; the screen then closes the reader. */
+    val uploaded = MutableStateFlow(false)
+
+    /** After the upload this book's reading state lives under a new id, so nothing is saved under [pubId] any more. */
+    @Volatile private var movedToCloud = false
+
     val annotations: StateFlow<List<AnnotationEntity>> = reading.observeAnnotations(pubId)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -111,7 +133,13 @@ class ReaderViewModel(
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     init {
-        viewModelScope.launch { positionCount.value = runCatching { session.publication.positions().size }.getOrNull() }
+        viewModelScope.launch {
+            val counts = runCatching { session.publication.positionsByReadingOrder().map { it.size } }.getOrNull()
+            positionsPerResource = counts
+            positionCount.value = counts?.sum()
+            // The first locator may have arrived before the counts; show its weighted progress right away.
+            locator.value = locator.value?.withTotalProgression()
+        }
         viewModelScope.launch {
             annotations.collect { list ->
                 highlights.value = list.filter { it.type == AnnotationType.HIGHLIGHT }
@@ -183,7 +211,38 @@ class ReaderViewModel(
     private var openedAt: Locator? = null
     private var moved = false
 
+    /** Opens the upload prompt, filled with the book's current metadata. */
+    fun requestUpload() {
+        if (!isLocal || uploading.value) return
+        viewModelScope.launch { uploadPrompt.value = UploadPrompt(container.library.localMeta(pubId)) }
+    }
+
+    fun cancelUpload() { uploadPrompt.value = null }
+
+    /** Uploads this local book (with [edits] to its metadata, if any) and moves its reading state to the cloud copy. */
+    fun upload(edits: EpubMeta?) {
+        if (!isLocal || uploading.value) return
+        uploadPrompt.value = null
+        uploading.value = true
+        message.value = "Uploading…"
+        // The app scope, so leaving the reader mid-upload doesn't cancel it half way.
+        container.appScope.launch {
+            try {
+                container.library.uploadLocal(pubId, edits)
+                movedToCloud = true
+                uploaded.value = true
+            } catch (e: NeedsLoginException) {
+                message.value = "Not connected to the cloud"
+            } catch (e: Exception) {
+                message.value = "Upload failed: ${e.message}"
+            } finally {
+                uploading.value = false
+            }
+        }
+    }
+
     private suspend fun persistPosition(loc: Locator) {
+        if (movedToCloud) return
         val start = openedAt ?: loc.also { openedAt = it }
         if (!moved && (loc.href != start.href || abs((loc.locations.progression ?: 0.0) - (start.locations.progression ?: 0.0)) > 1e-4)) {
             moved = true
@@ -194,18 +253,15 @@ class ReaderViewModel(
     }
 
     /**
-     * Readium fills `totalProgression` from its positions list; when it's missing, estimate it
-     * from the chapter index so the synced `progress` is never reset to 0.
+     * Sets `totalProgression` from the position in the current resource, weighted by resource length
+     * (see [weightedProgression]). Readium's own value moves in whole positions, so it sticks at a chapter's
+     * start value for a while; until the counts are loaded, it is kept as it is.
      */
     private fun Locator.withTotalProgression(): Locator {
-        val order = session.publication.readingOrder
-        val index = order.indexOfFirst { it.url().toString() == href.toString() }.takeIf { it >= 0 } ?: return this
-        val estimate = (index + (locations.progression ?: 0.0)) / order.size
-        val readium = locations.totalProgression
-        // Readium quantises to its positions list (~1 per 1 KB compressed); in short chapters that
-        // reports 0 well past the start. Use the estimate whenever Readium's value lags behind it.
-        if (readium != null && readium >= estimate * 0.9) return this
-        return copy(locations = locations.copy(totalProgression = maxOf(readium ?: 0.0, estimate)))
+        val counts = positionsPerResource ?: return this
+        val index = session.publication.readingOrder.indexOfFirst { it.url().toString() == href.toString() }
+        val total = weightedProgression(counts, index, locations.progression ?: 0.0) ?: return this
+        return copy(locations = locations.copy(totalProgression = total))
     }
 
     fun highlightSelection(color: Int, withNote: Boolean) {
@@ -390,3 +446,17 @@ class ReaderViewModel(
 
 fun AnnotationEntity.locator(): Locator? =
     locatorJson?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() }
+
+/**
+ * Progress through the whole book at [progression] (0..1) within reading-order resource [index], where
+ * [positionsPerResource] holds each resource's Readium position count (about one per KB of text): the
+ * positions before it plus the read share of its own, over all of them. Null if [index] is out of range
+ * or the book has no positions.
+ */
+internal fun weightedProgression(positionsPerResource: List<Int>, index: Int, progression: Double): Double? {
+    if (index !in positionsPerResource.indices) return null
+    val total = positionsPerResource.sum()
+    if (total <= 0) return null
+    val before = positionsPerResource.subList(0, index).sum()
+    return ((before + progression.coerceIn(0.0, 1.0) * positionsPerResource[index]) / total).coerceIn(0.0, 1.0)
+}

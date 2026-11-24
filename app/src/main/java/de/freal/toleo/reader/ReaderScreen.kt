@@ -30,10 +30,12 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -83,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.compose.AndroidFragment
 import de.freal.toleo.db.AnnotationEntity
+import de.freal.toleo.ui.UploadDialog
 import de.freal.toleo.ui.theme.ToleoTheme
 import kotlinx.coroutines.delay
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
@@ -97,7 +100,7 @@ fun ReaderScreen(
     vm: ReaderViewModel,
     onClose: () -> Unit,
     /** Installs a navigator factory for one- or two-page mode before the navigator is (re)created. */
-    installNavigatorFactory: (twoPages: Boolean, widthDp: Int) -> Unit,
+    installNavigatorFactory: (twoPages: Boolean, spineGutterDp: Int, widthDp: Int) -> Unit,
 ) {
     val prefs by vm.prefsStore.current.collectAsState()
     val chrome by vm.chromeVisible.collectAsState()
@@ -113,7 +116,19 @@ fun ReaderScreen(
     var navTop by remember { mutableIntStateOf(0) }
     val pageInfo by vm.pageInfo.collectAsState()
     val lineHeightDp by vm.lineHeightDp.collectAsState()
-    val window = (LocalContext.current as android.app.Activity).window
+    val context = LocalContext.current
+    val window = (context as android.app.Activity).window
+    val uploading by vm.uploading.collectAsState()
+    val uploadPrompt by vm.uploadPrompt.collectAsState()
+    val uploaded by vm.uploaded.collectAsState()
+
+    // The cloud copy is a different book with its own id, so this reader can't continue; go back to the library.
+    LaunchedEffect(uploaded) {
+        if (uploaded) {
+            android.widget.Toast.makeText(context, "Uploaded. Open it from your library.", android.widget.Toast.LENGTH_LONG).show()
+            onClose()
+        }
+    }
 
     ToleoTheme(darkTheme = prefs.theme.isDark) {
         BoxWithConstraints(Modifier.fillMaxSize().background(readerBg)) {
@@ -121,6 +136,7 @@ fun ReaderScreen(
             // The panel floats over the book, so opening it never collapses the open-book spread.
             val readerWidthDp = maxWidth.value.roundToInt()
             val twoPages = prefs.twoPages(readerWidthDp)
+            val spineGutter = if (twoPages) prefs.spineGutter else 0
 
             LaunchedEffect(readerWidthDp, prefs) { vm.submitPreferences(readerWidthDp) }
 
@@ -164,10 +180,10 @@ fun ReaderScreen(
                 ) {
                     // Readium's column settings are fixed per navigator: switching between one and
                     // two pages (fold/unfold, settings) recreates it at the current position.
-                    key(twoPages) {
-                        remember { installNavigatorFactory(twoPages, readerWidthDp) }
+                    key(twoPages, spineGutter) {
+                        remember { installNavigatorFactory(twoPages, spineGutter, readerWidthDp) }
                         AndroidFragment<EpubNavigatorFragment>(
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().overhang(ReaderPrefs.spineOverhangDp(spineGutter).dp),
                             onUpdate = { nav ->
                                 vm.attach(nav)
                                 vm.submitPreferences(readerWidthDp)
@@ -188,6 +204,9 @@ fun ReaderScreen(
                         progression = locator?.locations?.totalProgression ?: 0.0,
                         pageInfo = pageInfo,
                         onClose = onClose,
+                        showUpload = vm.isLocal,
+                        uploading = uploading,
+                        onUpload = vm::requestUpload,
                         onBookmark = vm::toggleBookmark,
                         onPanel = { vm.panel.value = if (panel == null) ReaderPanel.CONTENTS else null },
                         onSettings = { vm.settingsOpen.value = true },
@@ -234,6 +253,15 @@ fun ReaderScreen(
             }
         }
 
+        uploadPrompt?.let { prompt ->
+            UploadDialog(
+                meta = prompt.meta,
+                note = "Your position, highlights and bookmarks move to the cloud copy, and the reader closes when the upload is done.",
+                onConfirm = vm::upload,
+                onDismiss = vm::cancelUpload,
+            )
+        }
+
         editing?.let { a ->
             AnnotationDialog(
                 annotation = a,
@@ -255,6 +283,9 @@ private fun ReaderChrome(
     progression: Double,
     pageInfo: PageInfo,
     onClose: () -> Unit,
+    showUpload: Boolean,
+    uploading: Boolean,
+    onUpload: () -> Unit,
     onBookmark: () -> Unit,
     onPanel: () -> Unit,
     onSettings: () -> Unit,
@@ -271,6 +302,12 @@ private fun ReaderChrome(
                 },
                 navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to library") } },
                 actions = {
+                    if (showUpload) {
+                        IconButton(onClick = onUpload, enabled = !uploading) {
+                            if (uploading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Filled.CloudUpload, "Upload to your tolino cloud")
+                        }
+                    }
                     IconButton(onClick = onBookmark) {
                         Icon(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, "Bookmark page")
                     }
@@ -291,7 +328,13 @@ private fun ProgressBar(progression: Double, pageInfo: PageInfo, onSeek: (Double
     var dragging by remember { mutableStateOf(false) }
     var value by remember { mutableFloatStateOf(progression.toFloat()) }
     if (!dragging) value = progression.toFloat()
-    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), modifier = Modifier.fillMaxWidth()) {
+    // The content colour is explicit: Surface can't derive one from a translucent colour, and the
+    // fallback left the percentage nearly black on the dark theme.
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
       Column(Modifier.navigationBarsPadding().padding(bottom = 8.dp)) {
         Row(
             Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -325,9 +368,9 @@ private fun PageInfoRow(info: PageInfo, modifier: Modifier) {
         Text(
             chapter.joinToString(" · "),
             style = style, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
+            // Takes all the free width, so the page number sits at the right edge.
+            modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.weight(1f))
         Spacer(Modifier.width(12.dp))
         val page = info.page
         val total = info.totalPages
@@ -480,6 +523,15 @@ private fun SettingsSheet(prefs: ReaderPrefs, update: ((ReaderPrefs) -> ReaderPr
             valueRange = 0.2f..2.3f,
         )
         SwitchRow("Justify text", prefs.justify) { v -> update { it.copy(justify = v) } }
+        // Changing the gutter recreates the navigator, so it's only applied when the slider is released.
+        var gutter by remember(prefs.spineGutter) { mutableFloatStateOf(prefs.spineGutter.toFloat()) }
+        Text("Gap between pages (open book) +${gutter.roundToInt()} dp", style = MaterialTheme.typography.titleSmall)
+        Slider(
+            value = gutter,
+            onValueChange = { v -> gutter = ((v / 4).roundToInt() * 4).toFloat() },
+            onValueChangeFinished = { update { it.copy(spineGutter = gutter.roundToInt()) } },
+            valueRange = 0f..ReaderPrefs.MAX_SPINE_GUTTER_DP.toFloat(),
+        )
         SwitchRow("Page crease (open book)", prefs.crease) { v -> update { it.copy(crease = v) } }
         if (prefs.crease) {
             Text("Crease strength ${(prefs.creaseOpacity * 100).roundToInt()} %", style = MaterialTheme.typography.titleSmall)
@@ -562,6 +614,17 @@ private fun AnnotationDialog(
             }
         },
     )
+}
+
+/**
+ * Lays the content out [each] wider on the left and right than the space it is given, centred, so
+ * it reaches past both edges. Used for the extra spine gutter (see [ReaderPrefs.rsProperties]).
+ */
+private fun Modifier.overhang(each: androidx.compose.ui.unit.Dp) = if (each.value <= 0f) this else layout { measurable, constraints ->
+    val extra = each.roundToPx()
+    val width = constraints.maxWidth + 2 * extra
+    val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+    layout(constraints.maxWidth, placeable.height) { placeable.place(-extra, 0) }
 }
 
 /**

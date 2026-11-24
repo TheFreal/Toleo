@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Widget text for the transparent style: two identical TextViews stacked, the lower casting a
+    wide soft halo and the upper a tight dark edge. Text size and max lines are set in code.
+    The padding leaves room for the shadows, which would otherwise be clipped at the view's edge.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <TextView
+        android:id="@+id/shadow_wide"
+        style="@style/WidgetShadowText.Title"
+        android:importantForAccessibility="no"
+        android:shadowColor="#B3000000"
+        android:shadowRadius="16" />
+
+    <TextView
+        android:id="@+id/shadow_tight"
+        style="@style/WidgetShadowText.Title"
+        android:shadowColor="#F2000000"
+        android:shadowDy="1.5"
+        android:shadowRadius="4" />
+</FrameLayout>

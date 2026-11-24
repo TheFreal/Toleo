@@ -52,4 +52,7 @@ class AppContainer(context: Context) {
 
     /** The publication handed from the library to [de.freal.toleo.reader.ReaderActivity]. */
     @Volatile var readerSession: ReaderSession? = null
+
+    /** A book the home screen widget asked to open; the library opens it and clears this. */
+    val openRequest = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 }

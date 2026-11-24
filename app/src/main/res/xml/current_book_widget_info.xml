@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    1×2 by default (book-shaped: just the cover); resized wider it shows title, author and progress.
+    The background style is picked on placement and can be changed later via "Customize".
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:configure="de.freal.toleo.widget.WidgetConfigActivity"
+    android:widgetFeatures="reconfigurable"
+    android:description="@string/widget_current_book_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:previewLayout="@layout/widget_current_book_preview"
+    android:minWidth="40dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="40dp"
+    android:minResizeHeight="40dp"
+    android:targetCellWidth="1"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

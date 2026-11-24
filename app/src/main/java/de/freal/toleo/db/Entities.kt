@@ -36,6 +36,12 @@ data class BookEntity(
     val pinnedAt: Long? = null,
     /** Hidden from the Library, the shelf and the current-book panel; listed under "Hidden" instead. Local only. */
     @ColumnInfo(defaultValue = "0") val hidden: Boolean = false,
+    /**
+     * Cover taken from the book's own file, as a `file://` URI; shown instead of [coverUrl]. Set for
+     * uploads and local books, whose cloud cover is generated and often missing. Empty when the file
+     * was checked and has no cover; null when it hasn't been checked yet.
+     */
+    val localCover: String? = null,
 )
 
 /** Reading position: the Tolino `bookmark` item, one per publication. */

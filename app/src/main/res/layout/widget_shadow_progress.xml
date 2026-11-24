@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Progress bar for the transparent style; inset like the shadowed text so they line up. Two bars
+    on the same progress: the fill (which can be tinted with the cover's colour) and its dark
+    outline above it, which a tint would otherwise recolour too.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingHorizontal="3dp"
+    android:paddingVertical="1dp">
+
+    <ProgressBar
+        android:id="@+id/shadow_progress"
+        style="@android:style/Widget.Material.ProgressBar.Horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:indeterminate="false"
+        android:max="100"
+        android:maxHeight="6dp"
+        android:minHeight="6dp"
+        android:progressDrawable="@drawable/widget_progress_shadowed" />
+
+    <ProgressBar
+        android:id="@+id/shadow_progress_outline"
+        style="@android:style/Widget.Material.ProgressBar.Horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:indeterminate="false"
+        android:max="100"
+        android:maxHeight="6dp"
+        android:minHeight="6dp"
+        android:progressDrawable="@drawable/widget_progress_shadowed_outline" />
+</FrameLayout>

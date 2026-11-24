@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.Flow
 interface BookDao {
     @Query(
         """
-        SELECT b.publicationId, b.title, b.subtitle, b.authors, b.coverUrl, b.format, b.localPath, b.drm,
+        SELECT b.publicationId, b.title, b.subtitle, b.authors, COALESCE(NULLIF(b.localCover, ''), b.coverUrl) AS coverUrl, b.format, b.localPath, b.drm,
                b.isUpload, b.inCloud, b.lastOpened, b.sortIndex, b.dismissedAt, b.pinnedAt, b.hidden, p.progress,
                EXISTS(SELECT 1 FROM tag t WHERE t.publicationId = b.publicationId AND t.name = '${TagEntity.FINISHED_NAME}' AND t.deleted = 0) AS finished,
                (SELECT GROUP_CONCAT(t.name, '\u001F') FROM tag t WHERE t.publicationId = b.publicationId AND t.category = '${TagEntity.CATEGORY_COLLECTION}' AND t.deleted = 0) AS collections
@@ -43,6 +43,9 @@ interface BookDao {
     @Query("UPDATE book SET pinnedAt = :time WHERE publicationId = :id")
     suspend fun setPinnedAt(id: String, time: Long?)
 
+    @Query("UPDATE book SET localCover = :cover WHERE publicationId = :id")
+    suspend fun setLocalCover(id: String, cover: String?)
+
     @Query("UPDATE book SET hidden = :hidden WHERE publicationId = :id")
     suspend fun setHidden(id: String, hidden: Boolean)
 
@@ -63,6 +66,10 @@ interface PositionDao {
 
     @Query("SELECT * FROM position WHERE dirty = 1")
     suspend fun dirty(): List<PositionEntity>
+
+    /** Re-homes a position when a local book becomes a cloud book; keeps the dirty flag as it was. */
+    @Query("UPDATE OR REPLACE position SET publicationId = :to WHERE publicationId = :from")
+    suspend fun move(from: String, to: String)
 }
 
 @Dao
@@ -87,6 +94,10 @@ interface AnnotationDao {
 
     @Query("DELETE FROM annotation WHERE id = :id")
     suspend fun hardDelete(id: String)
+
+    /** Re-homes highlights and bookmarks when a local book becomes a cloud book. */
+    @Query("UPDATE annotation SET publicationId = :to WHERE publicationId = :from")
+    suspend fun move(from: String, to: String)
 }
 
 @Dao
@@ -108,6 +119,10 @@ interface TagDao {
 
     @Query("DELETE FROM tag WHERE id = :id")
     suspend fun hardDelete(id: Long)
+
+    /** Re-homes the finished flag when a local book becomes a cloud book. */
+    @Query("UPDATE tag SET publicationId = :to WHERE publicationId = :from")
+    suspend fun move(from: String, to: String)
 }
 
 @Dao
